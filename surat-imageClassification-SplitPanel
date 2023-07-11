@@ -1,0 +1,200 @@
+// Sage Katwala
+// GEO 343 final
+// Image classification with split panel 
+
+// imports/assets
+
+var Surat = ee.FeatureCollection('users/skatwala/fcSurat')
+var imageCollection = ee.ImageCollection("LANDSAT/LC08/C01/T1_TOA") // deprecated
+var nonBU = ee.FeatureCollection('users/skatwala/nonBU')
+var BU = ee.FeatureCollection('users/skatwala/BU')
+var nonBUwater = ee.FeatureCollection('users/skatwala/water')
+
+
+
+//////////////////////////////////////////
+// Function to filter out cloudy pixels
+function cloudMask(cloudyScene) { 
+   // Add a cloud score band to the image
+ var scored = ee.Algorithms.Landsat.simpleCloudScore(cloudyScene); 
+ // Create an image mask from the cloud score band and specify threshold.
+ var mask = scored.select(['cloud']).lte(10); 
+ // Apply the mask to the original image and return the masked image.
+ return cloudyScene.updateMask(mask); 
+} 
+
+// water mask
+var water = ee.Image('JRC/GSW1_0/GlobalSurfaceWater').select('occurrence');  // image w water to mask w
+var notWater = water.mask().not();
+
+////// imageCollection // ee.ImageCollection("LANDSAT/LC08/C01/T1_TOA")
+var bands = ['B5','B4','B3','B2','B1'];
+
+var l8 = imageCollection
+      .filterBounds(Surat)
+      .map(cloudMask)
+      .mean();
+
+// NDVI
+var l8NDVI = l8.updateMask(notWater).normalizedDifference(['B5','B4']).clip(Surat);
+
+///// training
+
+var landcoverX = BU.merge(nonBU);
+var landcover = landcoverX.merge(nonBUwater)
+
+var training = l8.select(bands).sampleRegions({
+  collection: landcover,
+  properties: ['landcover'],
+  scale: 30
+}); 
+
+var classifier = ee.Classifier
+  .smileRandomForest({numberOfTrees:20})
+  .train({features: training,
+        classProperty: 'landcover',
+         inputProperties: bands});
+         
+////// classify
+
+var ic2020 = imageCollection
+    .filterDate('2020-01-01','2020-12-31')
+    .filterBounds(Surat)
+    .map(cloudMask)
+    .mean()
+    .updateMask(notWater);
+
+var classify2020=ic2020
+    .select(bands)
+    .classify(classifier)
+    .clip(Surat)
+    ;
+
+var ic2013 = imageCollection
+    .filterDate('2013-01-01','2013-12-31')
+    .filterBounds(Surat)
+    .map(cloudMask)
+    .mean()
+    .updateMask(notWater);
+    
+var classify2013=ic2013
+    .select(bands)
+    .classify(classifier)
+    .clip(Surat);
+
+
+//Export.image.toAsset(classify2013, 
+  //  "Surat2013builtupclassifcationasset", 
+    //"classify2013_export",1000000000 ) ; //((scale = 10000))
+//////// UI
+
+ui.root.clear()
+
+var leftMap=ui.Map() // black, 2013
+leftMap.centerObject(Surat, 12);
+leftMap.addLayer(l8NDVI, {min: 0, max:0.5, palette: ['white','green']}, 'NDVI');
+leftMap.addLayer(classify2013.mask(classify2013),{min:0,max:1, palette:'black'},'classify 13');
+
+
+var rightMap = ui.Map() // red, 2020
+rightMap.centerObject(Surat,12);
+rightMap.addLayer(l8NDVI, {min: 0, max:0.5, palette: ['white','green']}, 'NDVI');
+rightMap.addLayer(classify2020.mask(classify2020),{min:0,max:1, palette:'red'},'classify 20');
+
+
+var splitPanel = ui.SplitPanel({
+  firstPanel: leftMap, 
+  secondPanel: rightMap,
+  wipe: true})
+ui.root.add(splitPanel)
+
+
+ui.root.setLayout(ui.Panel.Layout.absolute());
+var label = ui.Label({
+  value:'Built Up Areas of Surat: 2013 - 2020',
+  style:{position: 'top-center',
+        padding: '8px', 
+        textAlign: 'center', 
+        fontSize: '20px',
+        fontFamily: 'monospace',
+        fontWeight: '7px',
+        border: '2px solid'}
+  })
+  
+ui.root.add(label)
+
+/////// legend
+
+var legend = ui.Panel({
+ style: {
+    position: 'bottom-right',
+    padding: '8px',
+    border: '2px solid',
+    }
+});
+
+var legendTitle = ui.Label({
+ value: 'Legend',
+      style: {
+      fontFamily: 'monospace',
+      fontSize: '18px',
+      padding: '0',
+      textDecoration: 'underline'
+      }
+ });
+legend.add(legendTitle);
+
+var redBox = ui.Label({
+  value: '2020',
+  style: {
+        fontFamily: 'monospace',
+        backgroundColor: 'red',
+        padding: '8px',
+        color: 'white',
+        fontWeight: 'bold'
+        }
+ });
+var blackBox = ui.Label({
+  value: '2013',
+  style: {
+        fontFamily: 'monospace',
+        backgroundColor: 'black',
+        padding: '8px',
+        color: 'white',
+        fontWeight: 'bold'
+        }
+ });
+ 
+var greenBox = ui.Label({
+  value: 'NDVI',
+  style: {
+        fontFamily: 'monospace',
+        backgroundColor: 'green',
+        padding: '8px',
+        color: 'white',
+        fontWeight: 'bold'
+        }
+ });
+
+legend.add(blackBox);
+legend.add(redBox);
+legend.add(greenBox);
+
+ui.root.add(legend);
+leftMap.setControlVisibility({layerList: true, 
+              zoomControl: true, 
+              scaleControl: false, 
+              mapTypeControl: false, 
+              fullscreenControl: true, 
+              drawingToolsControl: false
+              });
+rightMap.setControlVisibility({layerList: true, 
+              zoomControl: true, 
+              scaleControl: false, 
+              mapTypeControl: false, 
+              fullscreenControl: true, 
+              drawingToolsControl: false
+              });
+
+ui.Map.Linker([leftMap, rightMap], 'change-bounds'); // link map movement
+
