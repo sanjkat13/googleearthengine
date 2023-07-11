@@ -1,0 +1,137 @@
+// Sage Katwala
+// LST slider ui by year
+///////////////////////
+
+// imports/assets
+
+var collection = ee.ImageCollection("MODIS/006/MYD11A2")
+var table = ee.FeatureCollection('users/skatwala/fcSurat')
+
+
+// center map
+Map.setCenter({lat:21.1838,lon:72.8159, zoom: 11});
+
+// water mask.
+var water = ee.Image('JRC/GSW1_0/GlobalSurfaceWater').select('occurrence');  // image w water to mask w
+var notWater = water.mask().not();
+
+// MODIS LST band
+var collection = collection.select('LST_Day_1km');
+print(collection)
+
+/////////////////////////////////////////////////////////////////////
+// function to show the image based on year from slider value
+var showLayer = function(year) {
+  Map.layers().reset();
+  
+  var startYear=slider.getValue(); // year
+  //print(startYear)
+  var startDate = ee.Date(startYear+'-01-01')
+  var endDate = startDate.advance(3, 'month')
+  var dateRange = ee.DateRange(startDate, endDate)
+  //print(dateRange)
+  
+  
+  
+  // filter collection and show image
+  var image1 = collection.filterDate(dateRange)
+  var image = image1.median().clip(table).multiply(0.02).subtract(273).updateMask(notWater);
+  Map.addLayer({
+    eeObject: ee.Image(image),
+    visParams: {
+      min: 31,
+      max: 43,
+      palette: ['white','blue','green','yellow','orange','red' ]
+       },
+    name: String(year)
+    });
+};
+
+////////////////////////////////////////////////////////////////////////
+
+// title/label and slider
+var label = ui.Label('Land Surface Temp by Year [Jan-Mar]');
+var slider = ui.Slider({
+  min: 2002,
+  max: 2021,
+  step: 1,
+  onChange: showLayer,
+  style: {stretch: 'horizontal'}
+});
+
+// panel that contains both the slider and the label
+var panel = ui.Panel({
+  widgets: [label, slider],
+  layout: ui.Panel.Layout.flow('vertical'),
+  style: {
+    position: 'top-center',
+    padding: '7px'
+  }
+});
+Map.add(panel);
+
+// set default value on the slider
+slider.setValue(2002)
+
+
+////////////////////////////////////////////////////////////////////
+// legend
+
+var legend = ui.Panel({
+ style: {
+    position: 'top-right',
+    border: '2px solid',
+    height: '100 px',
+    stretch: 'none'
+    }
+});
+
+
+// visualization palette
+var palette = ['white','blue','green','yellow','orange','red' ]
+
+// legend title.
+var legendTitle = ui.Label({
+ value: 'Legend',
+      style: {
+      fontFamily: 'monospace',
+      fontSize: '18px',
+      padding: '0',
+      textDecoration: 'underline'
+      }
+ });
+legend.add(legendTitle);
+
+// make gradiant
+function makeColorBarParams(palette) {
+  return {
+    bbox: [1,1,0,0],
+    dimensions: '40x100',
+    format: 'png',
+    min: 0,
+    max: 1,
+    palette: palette
+  };
+}
+
+var colorBar = ui.Thumbnail({
+  image: ee.Image.pixelLonLat().select(1),
+  params: makeColorBarParams(palette),
+  style: {stretch: 'vertical', margin: '0px 8px', maxHeight: '100px'}});
+// legend labels
+var maxLabel = ui.Label('Max: 43°C');
+var minLabel = ui.Label('Min: 31°C');
+
+legend.add(maxLabel)
+legend.add(colorBar)
+legend.add(minLabel)
+
+Map.add(legend);
+
+//////////////////
+// chart 
+var chartCollection = collection.filter(ee.Filter.dayOfYear(1, 90));
+
+var chart = ui.Chart.image.seriesByRegion(chartCollection, table, ee.Reducer.median(), 'LST_Day_1km')
+print(chart)
+
